@@ -5,10 +5,9 @@ volatile unsigned int state = 0; // finite state machine tracker
 
 String buf = ""; // buffer for reading from serial
 
-unsigned int division; // current division counter
-unsigned int totalDivisions; // number of total divisions to cut
-unsigned int stepsPerDiv; // number of steps per division
-unsigned int stepsPerRevolution; // number of steps per revolution
+unsigned long division=0; // current division counter
+unsigned long totalDivisions=0; // number of total divisions to cut
+unsigned long stepsPerDiv=0;   // number of steps per division
 
 void setup()
 {
@@ -16,18 +15,8 @@ void setup()
   Serial << endl << endl;
   Serial << "Initialising FUCAN-spintroller..." << endl;
 
-  /* Steps per revolution is the calculated number of steps required to rotate
-   * the workpiece one revolution.
-   */
-  stepsPerRevolution = microsteps * pulley * worm;
-
-  Serial << "Microsteps:   [" << microsteps << "]" << endl;
-  Serial << "Pulley ratio: [" << pulley << "]" << endl;
-  Serial << "Worm set to:  [" << worm << "]" << endl;
-  Serial << endl;
-
   // Initialise all the output pins
-  Serial << "Setting up output pins." << endl;
+  Serial << "Setting up output pins...";
   pinMode(pinStep, OUTPUT);
   digitalWrite(pinStep, invertStep^false );
 
@@ -38,94 +27,146 @@ void setup()
   digitalWrite(pinEn, invertEn^false);
 
   pinMode(pinStart, INPUT);
+  Serial << "  [DONE]" << endl;
 
-  // zero out the divisions to cut
-  division = 0;
-
-  Serial << "Initialisation complete. System ready." << endl;
+  Serial << "- Configuration ----------------" << endl;
+  Serial << "Microsteps:   [" << microsteps << "]" << endl;
+  Serial << "Pulley ratio: [" << pulley << "]" << endl;
+  Serial << "Worm ratio:   [" << worm << "]" << endl;
+  Serial << "--------------------------------" << endl << endl;
+  Serial << "Initialisation complete, entering finite state machine." << endl;
 }
 
 void loop()
 {
   switch(state)
   {
-    // display message to run cutter
+    // get number of divisions
     case 1:
-      if(division == totalDivisions)
+      getDivisions();
+
+      if(totalDivisions == 0)
       {
-        Serial << "Operation complete." << endl;
-        state = 0;
         return;
       }
-      digitalWrite(pinEn, invertEn^true);
-      Serial << "Run cutter for division " << division
-                                    << "/" << totalDivisions << endl;
-      Serial << "Press CYCLE START when ready to rotate." << endl;
-      state = 2;
-      return;
-    break;
 
-    // awaiting CYCLESTART
-    case 2:
-      // if button pushed, continue to state 3
-      delay(5);
-      if(pinStart == HIGH)
-        state = 3;
-      return;
-    break;
-
-    // rotate workpiece
-    case 3:
-      division++;
-      if(division <= totalDivisions)
-      {
-        Serial << "Rotating to division " << division << "/"
-                                          << totalDivisions << endl;
-        for(int i = 0; i < stepsPerDiv; i++)
-        {
-          digitalWrite(pinStep, invertStep^true);
-          delayMicroseconds(stepPeriod);
-          digitalWrite(pinStep, invertStep^false);
-          delayMicroseconds(stepPeriod);
-        }
-      }
-      state = 1;
-      return;
-    break;
-
-    // unknown, unset, or 0 state for FSM
-    default:
-      totalDivisions = getDivisions();
       if(totalDivisions < 3)
       {
-        Serial << "ERROR! Divisions must be 3 or greater." << endl;
+        Serial << "ERROR! Divisions currently set to [" << totalDivisions << "]. must be 3 or greater." << endl;
+        state = 1;
         return;
       }
 
       division = 1;
       stepsPerDiv = stepsPerRevolution / totalDivisions;
 
-      state = 1;
+      state = 2;
       return;
+    break;
+
+    // display message to run cutter
+    case 2:
+      digitalWrite(pinEn, invertEn^true);
+      Serial << "Run cutter for division " << division
+                                    << "/" << totalDivisions << ". ";
+      Serial << "Press CYCLE START when cutter has cleared." << endl;
+
+      // if last division, wait for CS to display complete message
+      if(division == totalDivisions)
+      {
+        state = 5;
+        return;
+      }
+
+      state = 3;
+      return;
+    break;
+
+    // awaiting CYCLESTART
+    case 3:
+      // if button pushed, continue to state 3
+      delay(5);
+      if(digitalRead(pinStart) == HIGH || getCycleStart())
+        state = 4;
+      return;
+    break;
+
+    // rotate workpiece
+    case 4:
+      division++;
+      if(division <= totalDivisions)
+      {
+        Serial << "Rotating to division " << division << "/"
+                                          << totalDivisions << " ";
+        for(unsigned long i = 0; i < stepsPerDiv; i++)
+        {
+          digitalWrite(pinStep, invertStep^true);
+          delayMicroseconds(stepPeriod);
+          digitalWrite(pinStep, invertStep^false);
+          delayMicroseconds(stepPeriod);
+        }
+
+        Serial << "[ DONE ]" << endl;
+      }
+      state = 2;
+      return;
+    break;
+
+    // awaiting CYCLESTART for final pass
+    case 5:
+      // if button pushed, continue to state 3
+      delay(5);
+      if(digitalRead(pinStart) == HIGH || getCycleStart())
+      {
+        Serial << "--------------------------------" << endl;
+        Serial << "Operation complete." << endl;
+        Serial << "--------------------------------" << endl;
+        state = 0;
+      }
+      return;
+    break;
+
+    // unknown, unset, or 0 state for FSM
+    default:
+      division = 0; // zero out the divisions counters
+      totalDivisions = 0;
+      Serial << endl << "Enter number of divisions (3 or greater): ";
+      state = 1;
     break;
   }
 }
 
-unsigned int getDivisions()
+void getDivisions()
 {
-  buf = "";
-
-  Serial << "Enter number of divisions (3 or greater): ";
-  while(Serial.available() > 0)
+  int inByte;
+  while(Serial.available())
   {
-    int inChar = Serial.read();
-    if(isDigit(inChar))
+    char inByte = Serial.read();
+    if(isDigit(inByte))
     {
-      buf += (char) inChar;
-      Serial << inChar;
+      buf += inByte;
+      Serial << inByte;
     }
 
-    if(inChar == '\n')
-      return (unsigned int) buf.toInt();
+    if(inByte == '\n' || inByte == '\r')
+    {
+      Serial << endl;
+      totalDivisions = (unsigned int) buf.toInt();
+      buf="";
+    }
+  }
+}
+
+bool getCycleStart()
+{
+  int inByte;
+  while(Serial.available())
+  {
+    char inByte = Serial.read();
+    if(inByte=='!')
+    {
+      state = 4;
+      return true;
+    }
   }
 }
