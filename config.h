@@ -3,7 +3,7 @@
  * this value is either 40:1 or 90:1, so enter either 40 or 90. It means 40 or
  * 90 rotations of the hand wheel will rotate the work piece one revolution.
  */
-int pitch = 90;
+int worm = 90;
 
 /*
  * Set ratio to be the pulley ratio between the stepper motor or servo and the
@@ -50,10 +50,43 @@ bool invertDir  = false; // invert DIR?
 bool invertEn   = true;  // invert ENABLE?
 
 /*
+ * stepPeriod
+ * The stepPeriod value is the width of a step pulse sent to the stepper
+ * driver. It determines how fast the motor will spin. Many drivers are capable
+ * of being run with a period of 1.5µs (1.5 microseconds) between each pulse,
+ * however there are several caveats:
+ *
+ * 1) The Arduino probably will struggle to keep up with anything faster than
+ *    20µs (50kHz).
+ * 2) The stepper motor itself might stall if it is under too much load for a
+ *    speed that fast.
+ * 3) The controller may not be able to keep up with signalling that fast.
+ *
+ * Most rotary tables are not being run at great speed for this is not a lathe.
+ * Given the default settings of 1600 microsteps, 4:1 pulley ratio and a 90:1
+ * worm ratio, we can calculate how long a complete revolution of the part will
+ * take in seconds:
+ * stepsPerRevolution = microsteps * pulley * worm
+ *                    = 1600 * 4 * 90
+ *                    = 576 000 steps.
+ * timePerRevolution  = 2 * stepPeriod * stepsPerRevolution / 100 000
+ *                    = 2 * 50 µs * 576 000
+ *                    = 5.76x10^7 µs
+ *                    = 57.6 seconds.
+ *
+ * This sounds awfully long, but is actually relatively. Suppose you are cutting
+ * a 32 tooth gear, it will take 57.6/32 seconds to move around to each tooth.
+ * This is 1.8 seconds, and when you consider how long it takes to crank the
+ * hand wheel using dividing plates through multiple rotations, this is actually
+ * a significant improvement, and explains why the value of 50µs was chosen.
+ */
+unsigned short stepPeriod = 50;
+
+/*
  * INPUT PINS
  * These pins are connected to switches to control the microcontroller.
  *
- *  o pinStart  - CYCLE START pin - will tell the controller to start the next
+ *  o pinStart  - CYCLESTART pin - will tell the controller to start the next
  *    movement.
  *  o pinAbort  - ABORT pin - will halt movement of stepper.
  *
@@ -63,9 +96,9 @@ bool invertEn   = true;  // invert ENABLE?
  * resistors, and the switch pulls to GND. If using regular logic, choose pull
  * down resistors and the switch pulls up to VCC.
  */
-int pinStart = 6; // CYCLE START button
+int pinStart = 6; // CYCLESTART button
 int pinAbort = 7; // ABORT button
-bool invertStart = false; // invert CYCLE START?
+bool invertStart = false; // invert CYCLESTART?
 bool invertAbort = false; // invert ABORT?
 
 /*
