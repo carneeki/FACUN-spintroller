@@ -6,6 +6,7 @@ branch, or maybe a new minor version branch will be created to create fixes for
 older revisions.
 
 ## Master
+Add mode to jog n degrees.
 
 ## 0.1
 Basic divide by n functionality.

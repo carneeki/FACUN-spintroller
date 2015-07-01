@@ -4,7 +4,7 @@
  * 'steps'. Many steppers will allow microstepping, allowing maybe 1600 steps
  * or more.
  */
-unsigned short microsteps = 1600;
+unsigned short microsteps = 200;
 
 /*
  * Set ratio to be the pulley ratio between the stepper motor or servo and the

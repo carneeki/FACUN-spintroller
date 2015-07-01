@@ -1,13 +1,14 @@
 #include <Streaming.h> // for stdio style << operators
 #include "config.h"
+//#include "helpers.cpp"
 
 volatile unsigned int state = 0; // finite state machine tracker
 
-String buf = ""; // buffer for reading from serial
+String buf; // buffer for serial input
 
 unsigned long division=0; // current division counter
 unsigned long totalDivisions=0; // number of total divisions to cut
-unsigned long stepsPerDiv=0;   // number of steps per division
+unsigned long stepsToDrive=0;   // number of steps to be driven
 
 void setup()
 {
@@ -41,31 +42,55 @@ void loop()
 {
   switch(state)
   {
-    // get number of divisions
+    // MSG:Select mode
+    case 0:
+      // zero ALL the things!
+      buf="";
+      division = 0;
+      totalDivisions = -1;
+      stepsToDrive = 0;
+
+      Serial << endl << "Select mode: (D)ivisions or (A)ngle: ";
+      state = 1;
+    break;
+
+    // INPUT:Mode
     case 1:
+      getMode();
+    break;
+
+    // MSG:Division entry
+    case 2:
+      Serial << endl << "Enter number of divisions (2 or greater; Q to quit): ";
+      state = 3; // division input state
+    break;
+
+    // INPUT:Number of divisions
+    case 3:
       getDivisions();
 
-      if(totalDivisions == 0)
+      if(totalDivisions == -1)
       {
         return;
       }
 
-      if(totalDivisions < 3)
+      if(totalDivisions < 2)
       {
-        Serial << "ERROR! Divisions currently set to [" << totalDivisions << "]. must be 3 or greater." << endl;
-        state = 1;
+        Serial << "ERROR! Divisions currently set to [" << totalDivisions << "]. must be 2 or greater." << endl;
+        totalDivisions = -1;
+        state = 2; // MSG: division entry
         return;
       }
 
       division = 1;
-      stepsPerDiv = stepsPerRevolution / totalDivisions;
+      stepsToDrive = stepsPerRevolution / totalDivisions;
 
-      state = 2;
+      state = 4; // MSG: run cutter
       return;
     break;
 
-    // display message to run cutter
-    case 2:
+    // MSG: run cutter
+    case 4:
       digitalWrite(pinEn, invertEn^true);
       Serial << "Run cutter for division " << division
                                     << "/" << totalDivisions << ". ";
@@ -74,46 +99,37 @@ void loop()
       // if last division, wait for CS to display complete message
       if(division == totalDivisions)
       {
-        state = 5;
+        state = 7; // WAIT: CS for final pass
         return;
       }
 
-      state = 3;
+      state = 5; // WAIT: CS for next pass
       return;
     break;
 
-    // awaiting CYCLESTART
-    case 3:
-      // if button pushed, continue to state 3
+    // WAIT:CS to rotate
+    case 5:
       delay(5);
       if(digitalRead(pinStart) == HIGH || getCycleStart())
-        state = 4;
+        state = 6; // MSG: run cutter
       return;
     break;
 
-    // rotate workpiece
-    case 4:
+    // ACTION:rotate
+    case 6:
       division++;
       if(division <= totalDivisions)
       {
         Serial << "Rotating to division " << division << "/"
                                           << totalDivisions << " ";
-        for(unsigned long i = 0; i < stepsPerDiv; i++)
-        {
-          digitalWrite(pinStep, invertStep^true);
-          delayMicroseconds(stepPeriod);
-          digitalWrite(pinStep, invertStep^false);
-          delayMicroseconds(stepPeriod);
-        }
-
-        Serial << "[ DONE ]" << endl;
+        rotateSteps();
       }
-      state = 2;
+      state = 4; // MSG: run cutter
       return;
     break;
 
-    // awaiting CYCLESTART for final pass
-    case 5:
+    // WAIT: CS for final pass
+    case 7:
       // if button pushed, continue to state 3
       delay(5);
       if(digitalRead(pinStart) == HIGH || getCycleStart())
@@ -126,47 +142,27 @@ void loop()
       return;
     break;
 
-    // unknown, unset, or 0 state for FSM
-    default:
-      division = 0; // zero out the divisions counters
-      totalDivisions = 0;
-      Serial << endl << "Enter number of divisions (3 or greater): ";
-      state = 1;
+    // MSG:Angle entry
+    case 8:
+      Serial << "Enter angle in decimal degrees (Q to quit): ";
+      state = 9;
     break;
-  }
-}
 
-void getDivisions()
-{
-  int inByte;
-  while(Serial.available())
-  {
-    char inByte = Serial.read();
-    if(isDigit(inByte))
-    {
-      buf += inByte;
-      Serial << inByte;
-    }
+    // INPUT:angle
+    case 9:
+      getAngle();
+    break;
 
-    if(inByte == '\n' || inByte == '\r')
-    {
-      Serial << endl;
-      totalDivisions = (unsigned int) buf.toInt();
-      buf="";
-    }
-  }
-}
+    // ACTION:rotate n steps
+    case 10:
+      Serial << "Rotating... ";
+      rotateSteps();
 
-bool getCycleStart()
-{
-  int inByte;
-  while(Serial.available())
-  {
-    char inByte = Serial.read();
-    if(inByte=='!')
-    {
-      state = 4;
-      return true;
-    }
+      state=8;
+    break;
+    // unknown, unset mode
+    default:
+      state = 0; // MSG: Select mode
+    break;
   }
 }
